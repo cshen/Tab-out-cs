@@ -36,11 +36,12 @@ The following features were added to this fork by **C Shen** using **Deepseek V4
     The file is gitignored, so your personal URL won't be committed. Reload the extension at `chrome://extensions` after editing.
     </details>
 
---- Tabs are grouped by domain, with homepages (Gmail, X, LinkedIn, etc.) pulled into their own group. Close tabs with a satisfying swoosh + confetti.
+
+- Tabs are grouped by domain, with homepages (Gmail, X, LinkedIn, etc.) pulled into their own group. Close tabs with a satisfying swoosh + confetti.
 
 No server. No account. No external API calls. Just a Chrome extension.
 
----
+
 
 ## Install with a coding agent
 
