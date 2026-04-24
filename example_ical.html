@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FullCalendar ICS Viewer</title>
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@fullcalendar/icalendar@6.1.10/index.global.min.js"></script>
+</head>
+<body>
+  <div id="calendar"></div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      const calendarEl = document.getElementById('calendar');
+      const calendar = new FullCalendar.Calendar(calendarEl, {
+        initialView: 'dayGridMonth',
+        // 👇 Your ICS feed here
+        events: {
+          url: 'https://example.com/your-calendar.ics',
+          format: 'ics',
+          // Important: FullCalendar will auto-refetch events periodically
+          // (default is every 10 minutes). Customise here:
+          // refetchInterval: 5 * 60 * 1000   // 5 minutes
+        },
+        // Force a refresh every 5 minutes
+        eventsSet: function() {
+          // You can force a refetch manually if needed
+        }
+      });
+      calendar.render();
+
+      // Manually set an interval if you want more control
+      setInterval(() => {
+        calendar.refetchEvents();
+      }, 5 * 60 * 1000); // 5 minutes
+    });
+  </script>
+</body>
+</html>
