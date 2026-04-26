@@ -1389,6 +1389,29 @@ body:has(.calendar-panel.open) .calendar-toggle {
   min-height: 300px;
 }
 
+/* Cache status line — shown below the calendar */
+.calendar-cache-status {
+  padding: 6px 16px 8px;
+  font-size: 10px;
+  text-align: center;
+  color: var(--muted);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.calendar-cache-status.error {
+  color: var(--status-abandoned);
+  opacity: 0.9;
+}
+
+.calendar-cache-status.stale {
+  color: var(--status-cooling);
+}
+
+.calendar-cache-status.fresh {
+  color: var(--status-active);
+}
+
 /* ---- FullCalendar theme overrides ---- */
 
 /* Toolbar */

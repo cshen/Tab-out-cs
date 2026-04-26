@@ -1606,21 +1606,50 @@ function formatICalDateTime(yyyymmddThhmmss) {
 }
 
 async function fetchICalEvents() {
-  return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage({ type: 'fetch-ics', url: ICS_FEED_URL }, (res) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-      } else if (!res || !res.ok) {
-        reject(new Error(res?.error || 'Failed to fetch calendar'));
-      } else {
-        try {
-          resolve(parseICS(res.text));
-        } catch (err) {
-          reject(err);
-        }
-      }
+  // Try network fetch first
+  try {
+    const res = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ type: 'fetch-ics', url: ICS_FEED_URL }, (res) => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve(res);
+      });
     });
-  });
+    if (!res || !res.ok) throw new Error(res?.error || 'Fetch failed');
+    const events = parseICS(res.text);
+    // Cache successful result
+    try {
+      await chrome.storage.local.set({
+        calendarCache: { events, updatedAt: Date.now() },
+      });
+    } catch {}
+    return { events, fromCache: false };
+  } catch (err) {
+    console.warn('[tab-out] Network fetch failed, trying cache:', err.message);
+    // Fall back to cache
+    try {
+      const { calendarCache } = await chrome.storage.local.get('calendarCache');
+      if (calendarCache && calendarCache.events && calendarCache.events.length > 0) {
+        return { events: calendarCache.events, fromCache: true, updatedAt: calendarCache.updatedAt };
+      }
+    } catch {}
+    throw err; // rethrow — no cache available
+  }
+}
+
+function updateCacheStatus(result) {
+  const el = document.getElementById('calendarCacheStatus');
+  if (!el) return;
+  if (!result) {
+    el.textContent = 'Unable to load calendar';
+    el.className = 'calendar-cache-status error';
+  } else if (result.fromCache) {
+    const ago = result.updatedAt ? timeAgo(new Date(result.updatedAt).toISOString()) : 'a while ago';
+    el.textContent = 'Updated ' + ago + ' · offline';
+    el.className = 'calendar-cache-status stale';
+  } else {
+    el.textContent = 'Up to date';
+    el.className = 'calendar-cache-status fresh';
+  }
 }
 
 function initCalendar() {
@@ -1643,34 +1672,47 @@ function initCalendar() {
     return;
   }
 
-  calendarInstance = new FullCalendar.Calendar(calendarEl, {
-    initialView: 'listMonth',
-    headerToolbar: {
-      left: 'prev',
-      center: 'title',
-      right: 'next',
-    },
-    height: 'auto',
-    contentHeight: 'auto',
-    events: async function(info, successCallback, failureCallback) {
-      try {
-        calendarAllEvents = await fetchICalEvents();
-        const filtered = calendarInboxOn ? filterFutureEvents(calendarAllEvents) : calendarAllEvents;
-        successCallback(filtered);
-      } catch (err) {
-        console.warn('[tab-out] Calendar fetch failed:', err.message);
-        failureCallback(err);
-      }
-    },
-    noEventsText: calendarInboxOn ? 'No upcoming events' : 'No events',
-    eventDidMount: function(info) {
-      if (info.event.extendedProps.location) {
-        const el = info.el.querySelector('.fc-list-event-title');
-        if (el) el.title = info.event.extendedProps.location;
-      }
-    },
-  });
-  calendarInstance.render();
+  try {
+    calendarInstance = new FullCalendar.Calendar(calendarEl, {
+      initialView: 'listMonth',
+      headerToolbar: {
+        left: 'prev',
+        center: 'title',
+        right: 'next',
+      },
+      height: 'auto',
+      contentHeight: 'auto',
+      loading: function(isLoading) {
+        const el = document.getElementById('calendar');
+        if (el) el.style.opacity = isLoading ? '0.5' : '1';
+      },
+      events: async function(info, successCallback, failureCallback) {
+        try {
+          const result = await fetchICalEvents();
+          calendarAllEvents = result.events;
+          const filtered = calendarInboxOn ? filterFutureEvents(calendarAllEvents) : calendarAllEvents;
+          updateCacheStatus(result);
+          successCallback(filtered);
+        } catch (err) {
+          console.warn('[tab-out] Calendar fetch failed:', err.message);
+          updateCacheStatus(null);
+          failureCallback(err);
+        }
+      },
+      noEventsText: calendarInboxOn ? 'No upcoming events' : 'No events',
+      eventDidMount: function(info) {
+        if (info.event.extendedProps.location) {
+          const el = info.el.querySelector('.fc-list-event-title');
+          if (el) el.title = info.event.extendedProps.location;
+        }
+      },
+    });
+    calendarInstance.render();
+  } catch (err) {
+    console.error('[tab-out] FullCalendar init failed:', err);
+    calendarEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">Calendar failed to load. Check the console for details.</div>';
+    return;
+  }
 
   // Auto-refresh every 5 minutes
   setInterval(() => {
@@ -1706,8 +1748,9 @@ function getPanelWidth() {
 
 async function loadPanelWidth() {
   try {
-    const { calendarPanelWidth = 380 } = await chrome.storage.local.get('calendarPanelWidth');
-    return Math.max(280, Math.min(600, calendarPanelWidth));
+    const { calendarPanelWidth } = await chrome.storage.local.get('calendarPanelWidth');
+    const w = Number(calendarPanelWidth) || 380;
+    return Math.max(280, Math.min(600, w));
   } catch { return 380; }
 }
 
@@ -1716,7 +1759,8 @@ async function savePanelWidth(w) {
 }
 
 function applyPanelWidth(w) {
-  document.documentElement.style.setProperty('--calendar-panel-width', w + 'px');
+  const safe = Number(w) || 380;
+  document.documentElement.style.setProperty('--calendar-panel-width', Math.max(280, Math.min(600, safe)) + 'px');
 }
 
 document.addEventListener('mousedown', (e) => {
@@ -1825,16 +1869,24 @@ function toggleCalendarPanel(show) {
 document.addEventListener('click', (e) => {
   const toggle = e.target.closest('#calendarToggle');
   if (!toggle) return;
-  toggleCalendarPanel(true);
-  // Lazy-init calendar on first open
-  if (!calendarInstance) initCalendar();
+  const panel = document.getElementById('calendarPanel');
+  if (!panel) return;
+  const isOpen = panel.classList.contains('open');
+  if (isOpen) {
+    toggleCalendarPanel(false);
+  } else {
+    toggleCalendarPanel(true);
+    // Lazy-init calendar on first open
+    if (!calendarInstance) initCalendar();
+  }
 });
 
 // Close button click
 document.addEventListener('click', (e) => {
   const close = e.target.closest('#calendarPanelClose');
   if (!close) return;
-  toggleCalendarPanel(false);
+  const panel = document.getElementById('calendarPanel');
+  if (panel && panel.classList.contains('open')) toggleCalendarPanel(false);
 });
 
 // Close panel on Escape key
