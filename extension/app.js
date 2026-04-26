@@ -1515,6 +1515,8 @@ document.addEventListener('click', (e) => {
 const ICS_FEED_URL = typeof LOCAL_ICS_FEED_URL !== 'undefined' ? LOCAL_ICS_FEED_URL : '';
 
 let calendarInstance = null;
+let calendarAllEvents = [];   // all parsed events, cached for Inbox filtering
+let calendarInboxOn  = false; // Inbox mode: show only future events
 
 /**
  * Parse raw ICS text into FullCalendar event objects.
@@ -1652,14 +1654,15 @@ function initCalendar() {
     contentHeight: 'auto',
     events: async function(info, successCallback, failureCallback) {
       try {
-        const events = await fetchICalEvents();
-        successCallback(events);
+        calendarAllEvents = await fetchICalEvents();
+        const filtered = calendarInboxOn ? filterFutureEvents(calendarAllEvents) : calendarAllEvents;
+        successCallback(filtered);
       } catch (err) {
         console.warn('[tab-out] Calendar fetch failed:', err.message);
         failureCallback(err);
       }
     },
-    noEventsText: 'No upcoming events',
+    noEventsText: calendarInboxOn ? 'No upcoming events' : 'No events',
     eventDidMount: function(info) {
       if (info.event.extendedProps.location) {
         const el = info.el.querySelector('.fc-list-event-title');
@@ -1674,6 +1677,134 @@ function initCalendar() {
     if (calendarInstance) calendarInstance.refetchEvents();
   }, 5 * 60 * 1000);
 }
+
+/**
+ * Filter events to only those starting today or later.
+ */
+function filterFutureEvents(events) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return events.filter(ev => {
+    const start = new Date(ev.start);
+    // For all-day events, compare date parts
+    if (ev.allDay) start.setHours(0, 0, 0, 0);
+    return start >= today;
+  });
+}
+
+// ---- Panel resize (drag left edge) ----
+
+let resizeDragging = false;
+let resizeStartX = 0;
+let resizeStartW = 0;
+
+function getPanelWidth() {
+  const panel = document.getElementById('calendarPanel');
+  if (!panel) return 380;
+  return panel.getBoundingClientRect().width;
+}
+
+async function loadPanelWidth() {
+  try {
+    const { calendarPanelWidth = 380 } = await chrome.storage.local.get('calendarPanelWidth');
+    return Math.max(280, Math.min(600, calendarPanelWidth));
+  } catch { return 380; }
+}
+
+async function savePanelWidth(w) {
+  try { await chrome.storage.local.set({ calendarPanelWidth: w }); } catch {}
+}
+
+function applyPanelWidth(w) {
+  document.documentElement.style.setProperty('--calendar-panel-width', w + 'px');
+}
+
+document.addEventListener('mousedown', (e) => {
+  const handle = e.target.closest('#calendarResizeHandle');
+  if (!handle) return;
+  resizeDragging = true;
+  resizeStartX  = e.clientX;
+  resizeStartW  = getPanelWidth();
+  handle.classList.add('dragging');
+  document.body.style.cursor  = 'col-resize';
+  document.body.style.userSelect = 'none';
+  e.preventDefault();
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!resizeDragging) return;
+  const delta  = resizeStartX - e.clientX; // drag left = widen
+  const newW    = Math.max(280, Math.min(600, resizeStartW + delta));
+  applyPanelWidth(newW);
+});
+
+document.addEventListener('mouseup', () => {
+  if (!resizeDragging) return;
+  resizeDragging = false;
+  const handle = document.getElementById('calendarResizeHandle');
+  if (handle) handle.classList.remove('dragging');
+  document.body.style.cursor  = '';
+  document.body.style.userSelect = '';
+  savePanelWidth(getPanelWidth());
+  // Let FullCalendar re-layout to the new container width
+  if (calendarInstance) calendarInstance.updateSize();
+});
+
+// ---- Inbox toggle ----
+
+async function loadInboxState() {
+  try {
+    const { calendarInbox = false } = await chrome.storage.local.get('calendarInbox');
+    return calendarInbox;
+  } catch { return false; }
+}
+
+async function saveInboxState(on) {
+  try { await chrome.storage.local.set({ calendarInbox: on }); } catch {}
+}
+
+function applyInboxState(on) {
+  calendarInboxOn = on;
+  const btn = document.getElementById('calendarInboxBtn');
+  if (btn) {
+    if (on) btn.classList.add('active');
+    else    btn.classList.remove('active');
+  }
+
+  if (!calendarInstance) return;
+
+  if (on) {
+    // Inbox: show ALL upcoming events, hide month navigation
+    calendarInstance.setOption('headerToolbar', false);
+    calendarInstance.setOption('visibleRange', {
+      start: new Date(),
+      end: new Date('2099-12-31'),
+    });
+    calendarInstance.changeView('listYear');
+    calendarInstance.gotoDate(new Date());
+  } else {
+    // Default: month view with navigation
+    calendarInstance.setOption('visibleRange', null);
+    calendarInstance.setOption('headerToolbar', {
+      left: 'prev',
+      center: 'title',
+      right: 'next',
+    });
+    calendarInstance.changeView('listMonth');
+  }
+
+  calendarInstance.refetchEvents();
+}
+
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('#calendarInboxBtn');
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const next = !calendarInboxOn;
+  applyInboxState(next);
+  saveInboxState(next);
+}, true); // capture phase, so FullCalendar handlers don't intercept
 
 function toggleCalendarPanel(show) {
   const panel = document.getElementById('calendarPanel');
@@ -1741,8 +1872,12 @@ calendarThemeObserver.observe(document.documentElement, {
    ---------------------------------------------------------------- */
 
 async function init() {
-  const theme = await getTheme();
+  const theme  = await getTheme();
+  const width  = await loadPanelWidth();
+  const inbox  = await loadInboxState();
   applyTheme(theme);
+  applyPanelWidth(width);
+  applyInboxState(inbox);
   renderDashboard();
 }
 

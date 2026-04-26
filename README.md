@@ -14,6 +14,8 @@ The following features were added to this fork by **C Shen** using **Deepseek V4
 
 - **iCal calendar panel** — a floating slide-out panel on the right edge of the page that displays upcoming events from any iCal feed (ICS format). Events are shown as a chronological to-do list using FullCalendar. The calendar auto-refreshes every 5 minutes.
 
+  - **Resizable panel** — drag the left edge of the panel to make it wider or narrower (280–600 px). Width is persisted across sessions.
+  - **Inbox toggle** — a button in the panel header that switches to showing *all* upcoming events (not limited to the current month) and hides the month navigation. Toggle off to return to the standard month view.
   - The ICS feed URL is configured in `extension/config.local.js` (gitignored), so each user can point it to their own calendar without modifying application code.
   - ICS fetching goes through the background service worker to avoid CORS issues with third-party calendar providers.
 
